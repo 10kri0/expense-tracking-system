@@ -8,12 +8,12 @@ This project is a monolithic Flask application built with:
 
 - Flask for routing and server-side rendering
 - Flask-Login for authentication
-- Flask-SQLAlchemy for database access
-- SQLite as the default database
+- PyMongo for MongoDB access
+- MongoDB Atlas or local MongoDB as the database backend
 - Chart.js for report visualizations
 - Pytest for automated tests
 
-The app is designed as an MVP, but it already covers the core workflow for a personal finance tracker:
+The app covers a complete personal-finance workflow:
 
 1. Register and log in
 2. Save salary and monthly budget
@@ -34,6 +34,7 @@ The app is designed as an MVP, but it already covers the core workflow for a per
   - monthly trend chart
   - filtered summary table
 - Default category seeding
+- MongoDB-backed persistence
 - Test coverage for authentication, validation, budgets, expense flows, and reports
 
 ## Tech Stack
@@ -42,24 +43,24 @@ The app is designed as an MVP, but it already covers the core workflow for a per
 | --- | --- |
 | Backend | Flask 3.1.1 |
 | Auth | Flask-Login |
-| ORM | Flask-SQLAlchemy / SQLAlchemy |
-| Database | SQLite by default |
+| Database Driver | PyMongo |
+| Database | MongoDB Atlas or local MongoDB |
 | Frontend | Jinja2 templates, Bootstrap 5, custom CSS |
 | Charts | Chart.js 4 |
 | Environment loading | python-dotenv |
-| Testing | Pytest |
+| Testing | Pytest + mongomock |
 
 ## Project Structure
 
 ```text
 .
 |-- app.py                  # Flask app, routes, helpers, report logic
-|-- models.py               # SQLAlchemy models
+|-- models.py               # MongoDB connection layer and data helpers
 |-- requirements.txt        # Python dependencies
 |-- pytest.ini              # Pytest configuration
 |-- .env.example            # Example environment variables
 |-- database/
-|   |-- .gitkeep            # Keeps the folder in version control
+|   |-- .gitkeep            # Kept for compatibility with the project structure
 |-- static/
 |   |-- css/
 |   |   |-- style.css       # Shared application styles
@@ -76,7 +77,8 @@ Before running the project, make sure you have:
 
 - Python 3.11+ installed
 - `pip` available
-- Internet access for loading CDN assets such as Bootstrap and Chart.js during development
+- Internet access for Bootstrap and Chart.js CDNs during development
+- A MongoDB Atlas cluster or local MongoDB server
 
 ## Installation
 
@@ -100,13 +102,11 @@ pip install -r requirements.txt
 
 ### 4. Create your `.env` file
 
-Copy the example file:
-
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Then update the values as needed.
+Then edit `.env` with your MongoDB connection details.
 
 ## Environment Variables
 
@@ -118,7 +118,16 @@ Your `.env` file should not be committed to Git. The project already ignores it 
 
 ```env
 SECRET_KEY=replace-this-with-a-long-random-secret
-DATABASE_URL=sqlite:///database/expenses.db
+MONGODB_URI=mongodb://localhost:27017/
+MONGODB_DB_NAME=expense_tracking_system
+```
+
+### MongoDB Atlas example
+
+```env
+SECRET_KEY=replace-this-with-a-long-random-secret
+MONGODB_URI=mongodb+srv://your_username:your_password@cluster0.example.mongodb.net/?appName=Cluster0
+MONGODB_DB_NAME=expense_tracking_system
 ```
 
 ### What each variable does
@@ -126,35 +135,44 @@ DATABASE_URL=sqlite:///database/expenses.db
 | Variable | Required | Purpose | Example |
 | --- | --- | --- | --- |
 | `SECRET_KEY` | Recommended | Used by Flask for session security and CSRF token signing | `SECRET_KEY=my-super-secret-key-123` |
-| `DATABASE_URL` | Optional | SQLAlchemy database connection string | `DATABASE_URL=sqlite:///database/expenses.db` |
+| `MONGODB_URI` | Yes | MongoDB server or Atlas connection string | `MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/?appName=Cluster0` |
+| `MONGODB_DB_NAME` | Yes | Database name used inside the MongoDB server or Atlas cluster | `MONGODB_DB_NAME=expense_tracking_system` |
+
+### Important note about special characters in passwords
+
+If your MongoDB password contains special characters such as `@`, `:`, `/`, or `?`, you must URL-encode the password before putting it into `MONGODB_URI`.
+
+Example:
+
+- Raw password: `Krish@2727`
+- Encoded password: `Krish%402727`
+
+So the URI format becomes:
+
+```env
+MONGODB_URI=mongodb+srv://your_username:your_encoded_password@cluster0.example.mongodb.net/?appName=Cluster0
+```
 
 ### Notes about `.env`
 
 - `SECRET_KEY`
   - In development, the app has a fallback value, but you should still set your own secret.
   - Use a long random string in real deployments.
-- `DATABASE_URL`
-  - If not provided, the app uses a local SQLite database at `database/expenses.db`.
-  - The current project dependencies are ready for SQLite out of the box.
-  - If you want PostgreSQL or another database engine, you will also need the correct driver package.
-
-### Example values
-
-#### Local development with SQLite
-
-```env
-SECRET_KEY=dev-secret-key-for-local-testing
-DATABASE_URL=sqlite:///database/expenses.db
-```
-
-#### Using another SQLite file
-
-```env
-SECRET_KEY=another-secret-key
-DATABASE_URL=sqlite:///database/my_custom_expenses.db
-```
+- `MONGODB_URI`
+  - This is the connection string for your MongoDB server or Atlas cluster.
+  - For Atlas, make sure your IP is allowed in Atlas Network Access.
+  - For SRV URLs such as `mongodb+srv://...`, the project includes `dnspython` so DNS resolution works.
+- `MONGODB_DB_NAME`
+  - This is the logical database name used inside the connected MongoDB server or Atlas cluster.
+  - The app will create its collections inside this database.
 
 ## Running the Application
+
+Run the database initialization command once before the first launch:
+
+```powershell
+python -m flask --app app init-db
+```
 
 ### Start the development server
 
@@ -170,7 +188,7 @@ http://127.0.0.1:5000
 
 ## Database Initialization
 
-The application is configured to create tables automatically on startup in normal development mode.
+The application is configured to initialize the MongoDB indexes and default categories automatically on startup in normal development mode.
 
 You can also initialize the database manually with the Flask CLI:
 
@@ -180,8 +198,8 @@ python -m flask --app app init-db
 
 This command:
 
-- creates database tables
-- applies lightweight schema updates
+- creates MongoDB indexes
+- ensures required collections are ready
 - seeds default categories
 
 ## Default Categories
@@ -232,6 +250,8 @@ Run the full test suite with:
 python -m pytest -q
 ```
 
+The tests use `mongomock`, so they run against a mock MongoDB backend instead of your real Atlas cluster.
+
 The tests cover:
 
 - user registration and login
@@ -248,7 +268,7 @@ The tests cover:
 - Shared CSS lives in `static/css/style.css`
 - Chart configuration lives in `static/js/charts.js`
 - Application logic and helpers live in `app.py`
-- SQLAlchemy models live in `models.py`
+- MongoDB connection and data helpers live in `models.py`
 
 ## Troubleshooting
 
@@ -268,13 +288,15 @@ Check the following:
 - Dependencies are installed from `requirements.txt`
 - Your `.env` values are valid
 
-### Database errors
+### MongoDB connection errors
 
 Check the following:
 
-- `DATABASE_URL` points to a valid location
-- The database folder exists or can be created
-- You have permission to write to the configured database path
+- `MONGODB_URI` is valid
+- `MONGODB_DB_NAME` is set
+- Your Atlas IP allowlist includes your current IP
+- Your Atlas username and password are correct
+- Any special characters in the password are URL-encoded
 
 ## Documentation
 
@@ -283,4 +305,3 @@ The `docs/` directory contains product, design, architecture, scope, and testing
 ## License
 
 This project currently does not include a license file. Add one before publishing publicly if needed.
-# expense-tracking-system
