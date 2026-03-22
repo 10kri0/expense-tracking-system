@@ -1,0 +1,58 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Budget | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="split-header mb-4">
+    <div>
+        <p class="eyebrow">Budget Management</p>
+        <h1 class="page-title">Set your monthly spending limit</h1>
+        <p class="page-copy">Set a monthly target so you can quickly see whether your spending is on track.</p>
+    </div>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-primary">Back to dashboard</a>
+</section>
+
+<section class="content-grid">
+    <article class="glass-panel section-card">
+        <div class="section-heading">
+            <p class="eyebrow">Save Budget</p>
+            <h2>Monthly target</h2>
+        </div>
+        <form method="post" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_to" value="budget">
+            <label class="field-group">
+                <span>Monthly budget amount</span>
+                <input type="number" name="monthly_budget" min="0.01" step="0.01" value="{{ form_value }}" placeholder="10000" required>
+            </label>
+            <button type="submit" class="btn btn-primary btn-hero">Save budget</button>
+        </form>
+    </article>
+
+    <article class="glass-panel section-card">
+        <div class="section-heading">
+            <p class="eyebrow">Current Status</p>
+            <h2>Budget posture</h2>
+        </div>
+        {% if current_budget %}
+            <div class="metric-row">
+                <span>Current budget</span>
+                <strong>{{ current_budget.monthly_budget | currency }}</strong>
+            </div>
+            <div class="metric-row">
+                <span>This month's expenses</span>
+                <strong>{{ monthly_expenses | currency }}</strong>
+            </div>
+            <div class="budget-meter mt-3">
+                <div class="budget-meter-bar tone-{{ budget_status.tone }}" style="width: {{ '%.2f'|format(budget_status.progress_width) }}%;"></div>
+            </div>
+            <p class="status-pill tone-{{ budget_status.tone }} mt-3">{{ budget_status.label }}</p>
+        {% else %}
+            <div class="empty-state compact">
+                <h3>No budget configured</h3>
+                <p>Once you save a budget, this page will show progress and over-limit alerts.</p>
+            </div>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}

@@ -1,0 +1,154 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Dashboard | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="hero-panel glass-panel mb-4">
+    <div>
+        <p class="eyebrow">Financial Summary Dashboard</p>
+        <h1 class="page-title">Your money picture for this month.</h1>
+        <p class="page-copy">
+            Use this page to save salary, check your budget status,
+            and review your latest expenses in one place.
+        </p>
+    </div>
+    <a href="{{ url_for('add_expense') }}" class="btn btn-primary btn-hero">Add expense</a>
+</section>
+
+<section class="stats-grid mb-4">
+    <article class="stat-card glass-panel stat-card-form">
+        <p>Monthly Salary</p>
+        <h2>{{ total_income | currency }}</h2>
+        <span>{{ income_source_label }}</span>
+        <form method="post" action="{{ url_for('salary') }}" class="salary-inline-form mt-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_to" value="dashboard">
+            <div class="salary-input-row">
+                <input type="number" name="salary" min="0.01" step="0.01" value="{{ salary_form_value }}" placeholder="35000" required>
+                <button type="submit" class="btn btn-outline-primary">{{ 'Update salary' if has_salary else 'Save salary' }}</button>
+            </div>
+        </form>
+    </article>
+    <article class="stat-card glass-panel">
+        <p>Total Expenses</p>
+        <h2>{{ total_expenses | currency }}</h2>
+        <span>All recorded expenses across your account.</span>
+    </article>
+    <article class="stat-card glass-panel">
+        <p>Monthly Balance</p>
+        <h2>{{ balance | currency }}</h2>
+        <span>Salary minus this month's expenses.</span>
+    </article>
+</section>
+
+<section class="content-grid">
+    <article class="glass-panel section-card budget-panel">
+        <div class="section-heading">
+            <p class="eyebrow">Budget Status</p>
+            <h2>Current month</h2>
+        </div>
+
+        {% if budget_status.has_budget %}
+            <div class="budget-meter budget-meter-lg">
+                <div class="budget-meter-bar tone-{{ budget_status.tone }}" style="width: {{ '%.2f'|format(budget_status.progress_width) }}%;"></div>
+            </div>
+            <div class="metric-row">
+                <span>Monthly budget</span>
+                <strong>{{ budget.monthly_budget | currency }}</strong>
+            </div>
+            <div class="metric-row">
+                <span>Monthly expenses</span>
+                <strong>{{ monthly_expenses | currency }}</strong>
+            </div>
+            <div class="metric-row">
+                <span>Utilization</span>
+                <strong>{{ '%.1f'|format(budget_status.utilization_rate) }}%</strong>
+            </div>
+            <div class="metric-row">
+                <span>{% if budget_remaining >= 0 %}Remaining to spend{% else %}Over by{% endif %}</span>
+                <strong>{{ (budget_remaining if budget_remaining >= 0 else budget_status.over_budget) | currency }}</strong>
+            </div>
+            <p class="status-pill tone-{{ budget_status.tone }}">{{ budget_status.label }}</p>
+
+            <form method="post" action="{{ url_for('budget') }}" class="budget-inline-form mt-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="return_to" value="dashboard">
+                <label class="field-group">
+                    <span>Update monthly budget</span>
+                    <div class="budget-input-row">
+                        <input type="number" name="monthly_budget" min="0.01" step="0.01" value="{{ budget_form_value }}" placeholder="10000" required>
+                        <button type="submit" class="btn btn-primary btn-hero">Update</button>
+                    </div>
+                </label>
+            </form>
+        {% else %}
+            <div class="budget-empty-panel">
+                <h3>No budget set yet</h3>
+                <p>Set your monthly limit right here and this card will immediately start tracking progress.</p>
+                <form method="post" action="{{ url_for('budget') }}" class="budget-inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="return_to" value="dashboard">
+                    <label class="field-group">
+                        <span>Monthly budget amount</span>
+                        <div class="budget-input-row">
+                            <input type="number" name="monthly_budget" min="0.01" step="0.01" value="{{ budget_form_value }}" placeholder="10000" required>
+                            <button type="submit" class="btn btn-primary btn-hero">Save budget</button>
+                        </div>
+                    </label>
+                </form>
+                <a href="{{ url_for('budget') }}" class="btn btn-outline-primary budget-secondary-link">Open full budget page</a>
+            </div>
+        {% endif %}
+    </article>
+
+    <article class="glass-panel section-card">
+        <div class="section-heading">
+            <p class="eyebrow">Recent Transactions</p>
+            <h2>Latest activity</h2>
+        </div>
+
+        {% if recent_transactions %}
+            <div class="stack-list">
+                {% for expense in recent_transactions %}
+                    <div class="list-row">
+                        <div>
+                            <strong>{{ expense.description }}</strong>
+                            <span>{{ expense.category.category_name }} | {{ expense.date.strftime('%d %b %Y') }}</span>
+                        </div>
+                        <strong>{{ expense.amount | currency }}</strong>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty-state compact">
+                <h3>No expenses yet</h3>
+                <p>Add your first expense to start populating the dashboard and reports.</p>
+            </div>
+        {% endif %}
+    </article>
+
+    <article class="glass-panel section-card">
+        <div class="section-heading">
+            <p class="eyebrow">Monthly Snapshot</p>
+            <h2>Quick highlights</h2>
+        </div>
+        <div class="metric-row">
+            <span>This month's expenses</span>
+            <strong>{{ monthly_expenses | currency }}</strong>
+        </div>
+        <div class="metric-row">
+            <span>Tracked categories</span>
+            <strong>{{ category_snapshot | length }}</strong>
+        </div>
+        {% if category_snapshot %}
+            <div class="tag-cloud">
+                {% for row in category_snapshot %}
+                    <span class="soft-tag">{{ row.category_name }} | {{ row.total | currency }}</span>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="muted-copy mb-0">Your top spending categories will show up here after a few entries.</p>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}

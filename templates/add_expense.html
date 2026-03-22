@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Add Expense | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="split-header mb-4">
+    <div>
+        <p class="eyebrow">Expense Management</p>
+        <h1 class="page-title">Add a new expense</h1>
+        <p class="page-copy">Fill in the details below and save the expense.</p>
+    </div>
+    <a href="{{ url_for('expenses') }}" class="btn btn-outline-primary">View history</a>
+</section>
+
+<section class="help-strip mb-4">
+    <span>Tip:</span>
+    <p>Use a short description like Groceries, Fuel, Rent, or Internet Bill so your history is easier to scan later.</p>
+</section>
+
+<section class="glass-panel form-panel">
+    <form method="post" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label class="field-group">
+            <span>Amount</span>
+            <input type="number" name="amount" min="0.01" step="0.01" value="{{ form.amount }}" placeholder="500.00" required>
+        </label>
+
+        <label class="field-group">
+            <span>Category</span>
+            <select name="category_id" required>
+                <option value="">Select category</option>
+                {% for category in categories %}
+                    <option value="{{ category.id }}" {% if form.category_id == category.id|string %}selected{% endif %}>
+                        {{ category.category_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </label>
+
+        <label class="field-group">
+            <span>Date</span>
+            <input type="date" name="date" value="{{ form.date or today_iso }}" required>
+        </label>
+
+        <label class="field-group field-wide">
+            <span>Description</span>
+            <input type="text" name="description" maxlength="255" value="{{ form.description }}" placeholder="Groceries, fuel, subscription..." required>
+        </label>
+
+        <div class="field-wide d-flex flex-column flex-md-row gap-3">
+            <button type="submit" class="btn btn-primary btn-hero">Save expense</button>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-primary">Back to dashboard</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Expenses | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="split-header mb-4">
+    <div>
+        <p class="eyebrow">Expense History</p>
+        <h1 class="page-title">All recorded expenses</h1>
+        <p class="page-copy">Newest transactions appear first. Use Delete to remove any wrong entry.</p>
+    </div>
+    <a href="{{ url_for('add_expense') }}" class="btn btn-primary btn-hero">Add expense</a>
+</section>
+
+<section class="glass-panel section-card">
+    {% if expenses %}
+        <div class="table-responsive">
+            <table class="table table-modern align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th>Description</th>
+                        <th class="text-end">Amount</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for expense in expenses %}
+                        <tr>
+                            <td data-label="Date">{{ expense.date.strftime('%d %b %Y') }}</td>
+                            <td data-label="Category"><span class="soft-tag">{{ expense.category.category_name }}</span></td>
+                            <td data-label="Description">{{ expense.description }}</td>
+                            <td data-label="Amount" class="text-end fw-semibold">{{ expense.amount | currency }}</td>
+                            <td data-label="Actions" class="text-end table-actions">
+                                <form method="post" action="{{ url_for('delete_expense', expense_id=expense.id) }}" class="delete-inline-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="return_to" value="{{ url_for('expenses', page=pagination.page) }}">
+                                    <button type="submit" class="btn btn-delete btn-sm" onclick="return confirm('Delete this expense record?');">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <nav class="pagination-wrap mt-4" aria-label="Expense pagination">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                <p class="muted-copy mb-0">
+                    Page {{ pagination.page }} of {{ pagination.pages if pagination.pages else 1 }}
+                </p>
+                <div class="d-flex gap-2">
+                    <a class="btn btn-outline-primary {% if not pagination.has_prev %}disabled{% endif %}" href="{{ url_for('expenses', page=pagination.prev_num) if pagination.has_prev else '#' }}">Previous</a>
+                    <a class="btn btn-outline-primary {% if not pagination.has_next %}disabled{% endif %}" href="{{ url_for('expenses', page=pagination.next_num) if pagination.has_next else '#' }}">Next</a>
+                </div>
+            </div>
+        </nav>
+    {% else %}
+        <div class="empty-state">
+            <h2>No expenses recorded yet</h2>
+            <p>Add your first expense to start building history, dashboards, and analytics.</p>
+            <a href="{{ url_for('add_expense') }}" class="btn btn-primary btn-hero">Add expense</a>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

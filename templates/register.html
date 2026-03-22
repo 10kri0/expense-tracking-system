@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Register | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="auth-layout">
+    <div class="auth-copy">
+        <p class="eyebrow">Create Account</p>
+        <h1>Start tracking your money in a simple way.</h1>
+        <p class="lead-copy">
+            Create your account to add salary, save a budget, record expenses,
+            and understand where your money goes.
+        </p>
+        <div class="feature-grid simple-points">
+            <div class="mini-panel">
+                <strong>Private account</strong>
+                <p>Your dashboard and records stay separate from other users.</p>
+            </div>
+            <div class="mini-panel">
+                <strong>Easy forms</strong>
+                <p>Add your details and start tracking right away.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="auth-card glass-panel">
+        <div class="section-heading">
+            <p class="eyebrow">Create Account</p>
+            <h2>Register</h2>
+        </div>
+        <form method="post" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="field-group">
+                <span>Username</span>
+                <input type="text" name="username" value="{{ form.username }}" placeholder="Choose a username" required>
+            </label>
+            <label class="field-group">
+                <span>Email</span>
+                <input type="email" name="email" value="{{ form.email }}" placeholder="you@example.com" required>
+            </label>
+            <label class="field-group">
+                <span>Password</span>
+                <input type="password" name="password" placeholder="Choose a secure password" required>
+            </label>
+            <button type="submit" class="btn btn-primary btn-hero">Create account</button>
+        </form>
+        <p class="form-footnote">
+            Already registered?
+            <a href="{{ url_for('login') }}">Sign in instead.</a>
+        </p>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Bad Request | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="glass-panel empty-state error-card">
+    <p class="eyebrow">400</p>
+    <h1>That request could not be processed.</h1>
+    <p>The form token may have expired. Refresh the page and try again.</p>
+    <a href="{{ url_for('login' if not current_user.is_authenticated else 'dashboard') }}" class="btn btn-primary btn-hero">Continue</a>
+</section>
+{% endblock %}

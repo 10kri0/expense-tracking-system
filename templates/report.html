@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Reports | Expense Management System{% endblock %}
+
+{% block content %}
+<section class="split-header mb-4">
+    <div>
+        <p class="eyebrow">Reports & Analytics</p>
+        <h1 class="page-title">See where your money is going.</h1>
+        <p class="page-copy">
+            Choose a time period to see your spending by category and month.
+        </p>
+    </div>
+    <div class="pill-nav">
+        <a href="{{ url_for('reports', period='daily') }}" class="period-pill {% if period == 'daily' %}active{% endif %}">Daily</a>
+        <a href="{{ url_for('reports', period='weekly') }}" class="period-pill {% if period == 'weekly' %}active{% endif %}">Weekly</a>
+        <a href="{{ url_for('reports', period='monthly') }}" class="period-pill {% if period == 'monthly' %}active{% endif %}">Monthly</a>
+    </div>
+</section>
+
+<section class="stats-grid mb-4">
+    <article class="stat-card glass-panel">
+        <p>Filtered Spend</p>
+        <h2>{{ filtered_total | currency }}</h2>
+        <span>{{ period_start.strftime('%d %b %Y') }} to {{ period_end.strftime('%d %b %Y') }}</span>
+    </article>
+    <article class="stat-card glass-panel">
+        <p>Records</p>
+        <h2>{{ record_count }}</h2>
+        <span>Expenses included in the selected period.</span>
+    </article>
+    <article class="stat-card glass-panel">
+        <p>Top Category</p>
+        <h2>{{ top_category or 'No data' }}</h2>
+        <span>Highest spending bucket for this filter window.</span>
+    </article>
+</section>
+
+<section class="content-grid reports-grid">
+    <article class="glass-panel section-card">
+        <div class="section-heading">
+            <p class="eyebrow">Category Breakdown</p>
+            <h2>Donut chart</h2>
+        </div>
+        {% if category_labels %}
+            <div class="chart-shell">
+                <canvas id="categoryChart" aria-label="Category spending chart"></canvas>
+            </div>
+        {% else %}
+            <div class="empty-state compact">
+                <h3>No data for this period</h3>
+                <p>Add more expenses or switch the report window to view category insights.</p>
+            </div>
+        {% endif %}
+    </article>
+
+    <article class="glass-panel section-card">
+        <div class="section-heading">
+            <p class="eyebrow">Trend</p>
+            <h2>Monthly expenses</h2>
+        </div>
+        {% if monthly_labels %}
+            <div class="chart-shell">
+                <canvas id="trendChart" aria-label="Monthly expense trend chart"></canvas>
+            </div>
+        {% else %}
+            <div class="empty-state compact">
+                <h3>No trend data yet</h3>
+                <p>The monthly trend chart will appear after you log expenses across one or more dates.</p>
+            </div>
+        {% endif %}
+    </article>
+</section>
+
+<section class="glass-panel section-card mt-4">
+    <div class="section-heading">
+        <p class="eyebrow">Summary Table</p>
+        <h2>Filtered category totals</h2>
+    </div>
+    {% if summary_rows %}
+        <div class="table-responsive">
+            <table class="table table-modern align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Total</th>
+                        <th>Share</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in summary_rows %}
+                        <tr>
+                            <td data-label="Category">{{ row.category_name }}</td>
+                            <td data-label="Total">{{ row.total | currency }}</td>
+                            <td data-label="Share">{{ '%.1f'|format(row.percentage) }}%</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="empty-state compact">
+            <h3>No summary rows available</h3>
+            <p>Add expenses to populate the chart data and summary table.</p>
+        </div>
+    {% endif %}
+</section>
+
+<script id="category-chart-data" type="application/json">{{ {"labels": category_labels, "values": category_values}|tojson }}</script>
+<script id="trend-chart-data" type="application/json">{{ {"labels": monthly_labels, "values": monthly_values}|tojson }}</script>
+{% endblock %}
