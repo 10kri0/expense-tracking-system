@@ -1,49 +1,36 @@
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from app import create_app
-from models import Category, db
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-TEST_DB_DIR = BASE_DIR / "database"
+from models import db, seed_default_categories
 
 
 @pytest.fixture()
 def app():
-    TEST_DB_DIR.mkdir(exist_ok=True)
-    database_path = TEST_DB_DIR / f"test_{uuid4().hex}.db"
     flask_app = create_app(
         {
             "TESTING": True,
             "WTF_CSRF_ENABLED": False,
             "AUTO_INIT_DB": False,
-            "SQLALCHEMY_DATABASE_URI": f"sqlite:///{database_path.as_posix()}",
+            "MONGODB_USE_MOCK": True,
+            "MONGODB_URI": "mongodb://localhost:27017/",
+            "MONGODB_DB_NAME": f"test_{uuid4().hex}",
         }
     )
 
     with flask_app.app_context():
         db.drop_all()
         db.create_all()
-        for category_name in ("Food", "Transport", "Shopping", "Bills", "Entertainment"):
-            db.session.add(Category(category_name=category_name))
-        db.session.commit()
+        seed_default_categories(("Food", "Transport", "Shopping", "Bills", "Entertainment"))
 
     yield flask_app
 
     with flask_app.app_context():
-        db.session.remove()
         db.drop_all()
-        db.engine.dispose()
-
-    try:
-        if database_path.exists():
-            database_path.unlink()
-    except PermissionError:
-        pass
+        db.close()
 
 
 @pytest.fixture()
