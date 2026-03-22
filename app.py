@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import re
 import secrets
-from collections import defaultdict
 from datetime import date, datetime, timedelta
-from types import SimpleNamespace
+from pathlib import Path
 from typing import Iterable
 
 from dotenv import load_dotenv
@@ -26,36 +25,17 @@ from flask_login import (
     login_user,
     logout_user,
 )
-from pymongo.errors import DuplicateKeyError
+from sqlalchemy import func, inspect, or_, text
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from models import (
-    Budget,
-    User,
-    create_expense_record,
-    create_user,
-    db,
-    delete_expense_record,
-    find_user_by_email,
-    find_user_by_login,
-    find_user_by_username,
-    get_budget_by_user_id,
-    get_category_by_id,
-    get_expense_for_user,
-    get_user_by_id,
-    list_categories,
-    list_expenses_for_user,
-    paginate_expenses_for_user,
-    seed_default_categories as seed_mongo_categories,
-    upsert_budget,
-    update_user_salary,
-)
+from models import Budget, Category, Expense, User, db
 
 try:
     import click
 except ImportError:  # pragma: no cover
     click = None
 
+BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CATEGORIES = ("Food", "Transport", "Shopping", "Bills", "Entertainment")
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 VALID_REPORT_PERIODS = {"daily", "weekly", "monthly"}
@@ -70,33 +50,26 @@ login_manager.login_message_category = "warning"
 def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__)
 
+    default_database_path = (BASE_DIR / "database" / "expenses.db").as_posix()
     app.config.update(
         SECRET_KEY="fallback-dev-key",
-        MONGODB_URI="mongodb://localhost:27017/",
-        MONGODB_DB_NAME="expense_tracking_system",
+        SQLALCHEMY_DATABASE_URI=f"sqlite:///{default_database_path}",
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
         WTF_CSRF_ENABLED=True,
         TESTING=False,
         AUTO_INIT_DB=True,
-        MONGODB_USE_MOCK=False,
     )
 
     app.config["SECRET_KEY"] = _read_env("SECRET_KEY", app.config["SECRET_KEY"])
-
-    mongo_uri = _read_env("MONGODB_URI", "").strip()
-    legacy_database_url = _read_env("DATABASE_URL", "").strip()
-    if not mongo_uri and legacy_database_url.startswith("mongodb"):
-        mongo_uri = legacy_database_url
-    if mongo_uri:
-        app.config["MONGODB_URI"] = mongo_uri
-
-    app.config["MONGODB_DB_NAME"] = _read_env(
-        "MONGODB_DB_NAME",
-        app.config["MONGODB_DB_NAME"],
+    app.config["SQLALCHEMY_DATABASE_URI"] = _read_env(
+        "DATABASE_URL",
+        app.config["SQLALCHEMY_DATABASE_URI"],
     )
 
     if test_config:
         app.config.update(test_config)
 
+    _ensure_sqlite_directory(app.config["SQLALCHEMY_DATABASE_URI"])
     db.init_app(app)
     login_manager.init_app(app)
 
@@ -105,7 +78,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @login_manager.user_loader
     def load_user(user_id: str) -> User | None:
-        return get_user_by_id(user_id)
+        return db.session.get(User, int(user_id))
 
     @app.before_request
     def csrf_protect() -> None:
@@ -128,6 +101,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.errorhandler(500)
     def server_error(error):  # noqa: ANN001
+        db.session.rollback()
         return render_template("500.html"), 500
 
     @app.route("/")
@@ -155,28 +129,27 @@ def create_app(test_config: dict | None = None) -> Flask:
             if not password:
                 errors.append("Password is required.")
 
-            duplicate_username = find_user_by_username(form["username"])
-            duplicate_email = find_user_by_email(form["email"])
-            if duplicate_username:
-                errors.append("That username is already taken.")
-            if duplicate_email:
-                errors.append("That email is already registered.")
+            duplicate = User.query.filter(
+                or_(User.username == form["username"], User.email == form["email"])
+            ).first()
+            if duplicate:
+                if duplicate.username == form["username"]:
+                    errors.append("That username is already taken.")
+                if duplicate.email == form["email"]:
+                    errors.append("That email is already registered.")
 
             if errors:
                 for message in errors:
                     flash(message, "danger")
                 return render_template("register.html", form=form), 200
 
-            try:
-                create_user(
-                    username=form["username"],
-                    email=form["email"],
-                    password_hash=generate_password_hash(password),
-                )
-            except DuplicateKeyError:
-                flash("That account information already exists. Please try different details.", "danger")
-                return render_template("register.html", form=form), 200
-
+            user = User(
+                username=form["username"],
+                email=form["email"],
+                password_hash=generate_password_hash(password),
+            )
+            db.session.add(user)
+            db.session.commit()
             flash("Account created successfully. Please sign in.", "success")
             return redirect(url_for("login"))
 
@@ -196,7 +169,9 @@ def create_app(test_config: dict | None = None) -> Flask:
                 flash("Username or email and password are required.", "danger")
                 return render_template("login.html", form=form), 200
 
-            user = find_user_by_login(form["username"])
+            user = User.query.filter(
+                or_(User.username == form["username"], User.email == form["username"].lower())
+            ).first()
             if not user or not check_password_hash(user.password_hash, password):
                 flash("Invalid credentials. Please try again.", "danger")
                 return render_template("login.html", form=form), 200
@@ -218,6 +193,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     @login_required
     def salary():
         raw_value = request.form.get("salary", "").strip()
+        return_to = request.form.get("return_to", "dashboard").strip().lower()
         salary_value, value_error = parse_positive_float(raw_value, "Salary")
 
         if value_error:
@@ -225,8 +201,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             metrics = build_dashboard_context(current_user, salary_form_value=raw_value)
             return render_template("dashboard.html", **metrics), 200
 
-        updated_user = update_user_salary(current_user.id, salary_value)
-        current_user.salary = updated_user.salary if updated_user else salary_value
+        current_user.salary = salary_value
+        db.session.commit()
         flash("Salary saved successfully.", "success")
         return redirect(url_for("dashboard"))
 
@@ -239,7 +215,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.route("/add-expense", methods=["GET", "POST"])
     @login_required
     def add_expense():
-        categories = list_categories()
+        categories = Category.query.order_by(Category.category_name.asc()).all()
         form = {
             "amount": "",
             "category_id": "",
@@ -261,8 +237,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             if amount_error:
                 errors.append(amount_error)
 
-            if form["category_id"]:
-                category = get_category_by_id(form["category_id"])
+            if form["category_id"].isdigit():
+                category = db.session.get(Category, int(form["category_id"]))
             if not category:
                 errors.append("Please select a valid category.")
 
@@ -282,13 +258,15 @@ def create_app(test_config: dict | None = None) -> Flask:
                     form=form,
                 ), 200
 
-            create_expense_record(
+            expense = Expense(
                 user_id=current_user.id,
                 amount=amount,
-                category=category,
+                category_id=category.id,
                 description=form["description"],
-                expense_date=expense_date,
+                date=expense_date,
             )
+            db.session.add(expense)
+            db.session.commit()
             flash("Expense saved successfully.", "success")
             return redirect(url_for("dashboard"))
 
@@ -298,21 +276,24 @@ def create_app(test_config: dict | None = None) -> Flask:
     @login_required
     def expenses():
         page = request.args.get("page", default=1, type=int)
-        pagination = paginate_expenses_for_user(current_user.id, page=page, per_page=10)
+        pagination = (
+            Expense.query.filter_by(user_id=current_user.id)
+            .order_by(Expense.date.desc(), Expense.id.desc())
+            .paginate(page=page, per_page=10, error_out=False)
+        )
         return render_template(
             "expenses.html",
             pagination=pagination,
             expenses=pagination.items,
         )
 
-    @app.route("/expenses/<expense_id>/delete", methods=["POST"])
+    @app.route("/expenses/<int:expense_id>/delete", methods=["POST"])
     @login_required
-    def delete_expense(expense_id: str):
-        expense = get_expense_for_user(expense_id, current_user.id)
-        if not expense:
-            abort(404)
+    def delete_expense(expense_id: int):
+        expense = Expense.query.filter_by(id=expense_id, user_id=current_user.id).first_or_404()
         return_to = normalize_return_path(request.form.get("return_to", "").strip(), url_for("expenses"))
-        delete_expense_record(expense.id)
+        db.session.delete(expense)
+        db.session.commit()
         flash("Expense deleted successfully.", "success")
         return redirect(return_to)
 
@@ -328,7 +309,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.route("/budget", methods=["GET", "POST"])
     @login_required
     def budget():
-        existing_budget = get_budget_by_user_id(current_user.id)
+        existing_budget = Budget.query.filter_by(user_id=current_user.id).first()
         form_value = format_number(existing_budget.monthly_budget) if existing_budget else ""
         monthly_expenses = get_monthly_expenses(current_user.id)
         budget_status = calculate_budget_status(
@@ -353,7 +334,13 @@ def create_app(test_config: dict | None = None) -> Flask:
                     budget_status=budget_status,
                 ), 200
 
-            existing_budget = upsert_budget(current_user.id, budget_value)
+            if existing_budget:
+                existing_budget.monthly_budget = budget_value
+            else:
+                existing_budget = Budget(user_id=current_user.id, monthly_budget=budget_value)
+                db.session.add(existing_budget)
+
+            db.session.commit()
             flash("Budget saved successfully.", "success")
             if return_to == "dashboard":
                 return redirect(url_for("dashboard"))
@@ -373,6 +360,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         @with_appcontext
         def init_db_command() -> None:
             db.create_all()
+            ensure_schema_updates()
             added = seed_default_categories()
             click.echo(f"Database initialized. Added {added} categories.")
 
@@ -385,6 +373,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     if app.config.get("AUTO_INIT_DB", True):
         with app.app_context():
             db.create_all()
+            ensure_schema_updates()
             seed_default_categories()
 
     return app
@@ -402,6 +391,19 @@ def _read_env(key: str, default: str) -> str:
     from os import getenv
 
     return getenv(key, default)
+
+
+def _ensure_sqlite_directory(database_uri: str) -> None:
+    sqlite_prefix = "sqlite:///"
+    if not database_uri.startswith(sqlite_prefix):
+        return
+    raw_path = database_uri.removeprefix(sqlite_prefix)
+    if raw_path == ":memory:":
+        return
+    db_path = Path(raw_path)
+    if not db_path.is_absolute():
+        db_path = BASE_DIR / db_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def generate_csrf_token() -> str:
@@ -505,15 +507,23 @@ def sum_amounts(values: Iterable[float | int]) -> float:
     return float(sum(values))
 
 
-def get_total_expenses(user_id: str) -> float:
-    expenses = list_expenses_for_user(user_id)
-    return sum_amounts(expense.amount for expense in expenses)
+def get_total_expenses(user_id: int) -> float:
+    total = db.session.query(func.sum(Expense.amount)).filter(Expense.user_id == user_id).scalar()
+    return float(total or 0.0)
 
 
-def get_monthly_expenses(user_id: str, reference_date: date | None = None) -> float:
+def get_monthly_expenses(user_id: int, reference_date: date | None = None) -> float:
     start_date, end_date = get_period_window("monthly", reference_date)
-    expenses = list_expenses_for_user(user_id, start_date=start_date, end_date=end_date)
-    return sum_amounts(expense.amount for expense in expenses)
+    total = (
+        db.session.query(func.sum(Expense.amount))
+        .filter(
+            Expense.user_id == user_id,
+            Expense.date >= start_date,
+            Expense.date <= end_date,
+        )
+        .scalar()
+    )
+    return float(total or 0.0)
 
 
 def build_dashboard_context(
@@ -521,11 +531,15 @@ def build_dashboard_context(
     budget_form_value: str | None = None,
     salary_form_value: str | None = None,
 ) -> dict[str, object]:
-    all_expenses = list_expenses_for_user(user.id)
-    total_expenses = sum_amounts(expense.amount for expense in all_expenses)
+    total_expenses = get_total_expenses(user.id)
     monthly_expenses = get_monthly_expenses(user.id)
-    recent_transactions = list_expenses_for_user(user.id, limit=10)
-    budget = get_budget_by_user_id(user.id)
+    recent_transactions = (
+        Expense.query.filter_by(user_id=user.id)
+        .order_by(Expense.date.desc(), Expense.id.desc())
+        .limit(10)
+        .all()
+    )
+    budget = Budget.query.filter_by(user_id=user.id).first()
     if user.salary is not None:
         total_income = user.salary
         income_source_label = "Using your saved monthly salary."
@@ -542,14 +556,18 @@ def build_dashboard_context(
         monthly_expenses,
     )
     budget_remaining = (budget.monthly_budget - monthly_expenses) if budget else None
-
-    category_totals: dict[str, float] = defaultdict(float)
-    for expense in all_expenses:
-        category_totals[expense.category_name] += expense.amount
-    category_snapshot = [
-        SimpleNamespace(category_name=name, total=total)
-        for name, total in sorted(category_totals.items(), key=lambda item: item[1], reverse=True)[:3]
-    ]
+    category_snapshot = (
+        db.session.query(
+            Category.category_name,
+            func.sum(Expense.amount).label("total"),
+        )
+        .join(Expense, Expense.category_id == Category.id)
+        .filter(Expense.user_id == user.id)
+        .group_by(Category.category_name)
+        .order_by(func.sum(Expense.amount).desc())
+        .limit(3)
+        .all()
+    )
 
     return {
         "total_income": total_income,
@@ -576,31 +594,60 @@ def build_dashboard_context(
     }
 
 
-def build_reports_context(user_id: str, period: str) -> dict[str, object]:
+def build_reports_context(user_id: int, period: str) -> dict[str, object]:
     start_date, end_date = get_period_window(period)
-    filtered_expenses = list_expenses_for_user(user_id, start_date=start_date, end_date=end_date)
+    filtered_expenses = Expense.query.filter(
+        Expense.user_id == user_id,
+        Expense.date >= start_date,
+        Expense.date <= end_date,
+    )
 
-    category_totals_map: dict[str, float] = defaultdict(float)
-    monthly_totals_map: dict[str, float] = defaultdict(float)
-    for expense in filtered_expenses:
-        category_totals_map[expense.category_name] += expense.amount
-        monthly_totals_map[expense.date.strftime("%Y-%m")] += expense.amount
+    category_totals = (
+        db.session.query(
+            Category.category_name,
+            func.sum(Expense.amount).label("total"),
+        )
+        .join(Expense, Expense.category_id == Category.id)
+        .filter(
+            Expense.user_id == user_id,
+            Expense.date >= start_date,
+            Expense.date <= end_date,
+        )
+        .group_by(Category.category_name)
+        .order_by(func.sum(Expense.amount).desc())
+        .all()
+    )
 
-    category_totals = [
-        SimpleNamespace(category_name=name, total=total)
-        for name, total in sorted(category_totals_map.items(), key=lambda item: item[1], reverse=True)
-    ]
-    monthly_trends = [
-        SimpleNamespace(month=month, total=total)
-        for month, total in sorted(monthly_totals_map.items())
-    ]
+    monthly_trends = (
+        db.session.query(
+            func.strftime("%Y-%m", Expense.date).label("month"),
+            func.sum(Expense.amount).label("total"),
+        )
+        .filter(
+            Expense.user_id == user_id,
+            Expense.date >= start_date,
+            Expense.date <= end_date,
+        )
+        .group_by(func.strftime("%Y-%m", Expense.date))
+        .order_by(func.strftime("%Y-%m", Expense.date))
+        .all()
+    )
 
     category_labels = [row.category_name for row in category_totals]
     category_values = [float(row.total or 0.0) for row in category_totals]
     monthly_labels = [row.month for row in monthly_trends]
     monthly_values = [float(row.total or 0.0) for row in monthly_trends]
-    filtered_total = sum_amounts(expense.amount for expense in filtered_expenses)
-    record_count = len(filtered_expenses)
+    filtered_total = (
+        db.session.query(func.sum(Expense.amount))
+        .filter(
+            Expense.user_id == user_id,
+            Expense.date >= start_date,
+            Expense.date <= end_date,
+        )
+        .scalar()
+        or 0.0
+    )
+    record_count = filtered_expenses.count()
     top_category = category_totals[0].category_name if category_totals else None
 
     summary_rows = []
@@ -630,11 +677,33 @@ def build_reports_context(user_id: str, period: str) -> dict[str, object]:
 
 
 def seed_default_categories() -> int:
-    return seed_mongo_categories(DEFAULT_CATEGORIES)
+    existing = {
+        category_name
+        for (category_name,) in db.session.query(Category.category_name).all()
+    }
+    added = 0
+    for name in DEFAULT_CATEGORIES:
+        if name not in existing:
+            db.session.add(Category(category_name=name))
+            added += 1
+    if added:
+        db.session.commit()
+    return added
 
 
-app = create_app({"AUTO_INIT_DB": False})
+def ensure_schema_updates() -> None:
+    inspector = inspect(db.engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "salary" not in existing_columns:
+        db.session.execute(text("ALTER TABLE users ADD COLUMN salary FLOAT"))
+        db.session.commit()
+
+
+app = create_app()
 
 
 if __name__ == "__main__":
-    create_app().run(debug=True)
+    app.run(debug=True)

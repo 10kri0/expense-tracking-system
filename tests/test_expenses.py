@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from models import Budget, Expense, User
+from models import Budget, Expense, User, db
 from tests.conftest import login, register
 
 
@@ -58,7 +58,7 @@ def test_delete_expense_removes_record(logged_in_client, app):
     )
 
     with app.app_context():
-        expense = Expense.find_by_description("Disposable expense")
+        expense = Expense.query.filter_by(description="Disposable expense").first()
         assert expense is not None
         expense_id = expense.id
 
@@ -72,7 +72,7 @@ def test_delete_expense_removes_record(logged_in_client, app):
     assert b"Expense deleted successfully" in response.data
 
     with app.app_context():
-        assert Expense.get_by_id(expense_id) is None
+        assert db.session.get(Expense, expense_id) is None
 
 
 def test_expense_history_shows_only_current_user_data(client):
@@ -129,8 +129,8 @@ def test_budget_page_updates_budget(logged_in_client, app):
     assert b"Budget saved successfully" in response.data
 
     with app.app_context():
-        user = User.find_by_username("testuser")
-        budget = Budget.find_by_user_id(user.id)
+        user = User.query.filter_by(username="testuser").first()
+        budget = Budget.query.filter_by(user_id=user.id).first()
         assert budget is not None
         assert budget.monthly_budget == 10000.0
 
@@ -147,8 +147,8 @@ def test_dashboard_budget_panel_can_create_budget(logged_in_client, app):
     assert b"Remaining to spend" in response.data
 
     with app.app_context():
-        user = User.find_by_username("testuser")
-        budget = Budget.find_by_user_id(user.id)
+        user = User.query.filter_by(username="testuser").first()
+        budget = Budget.query.filter_by(user_id=user.id).first()
         assert budget is not None
         assert budget.monthly_budget == 12000.0
 
@@ -165,7 +165,7 @@ def test_salary_updates_dashboard_summary(logged_in_client, app):
     assert b"Using your saved monthly salary" in response.data
 
     with app.app_context():
-        user = User.find_by_username("testuser")
+        user = User.query.filter_by(username="testuser").first()
         assert user.salary == 35000.0
 
 
